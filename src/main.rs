@@ -1,5 +1,4 @@
-use actix::prelude::*;
-use std::time::{Duration, Instant};
+use actix::{Actor, StreamHandler};
 
 use actix_web::*;
 use actix_web_actors::ws;
@@ -7,40 +6,12 @@ use actix_web_actors::ws;
 use actix_files as fs;
 use tera::{Tera, Context};
 
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-/// How long before lack of client response causes a timeout
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-struct Ws {
-    hb: Instant,
-}
+
+struct Ws;
 
 impl Actor for Ws {
     type Context = ws::WebsocketContext<Self>;
-
-    fn started(&mut self, ctx: &mut Self::Context) {
-        self.hb(ctx);
-    }
-}
-
-impl Ws {
-    fn new() -> Self {
-        Self { hb: Instant::now() }
-    }
-
-    fn hb(&self, ctx: &mut <Self as Actor>::Context) {
-        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
-            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
-                println!("Websocket Client heartbeat failed, disconnecting!");
-
-                ctx.stop();
-
-                return;
-            }
-
-            ctx.ping(b"");
-        });
-    }
 }
 
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for Ws {
@@ -49,23 +20,14 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for Ws {
         ctx: &mut Self::Context,
     ) {
         match msg {
-            Ok(ws::Message::Ping(msg)) => {
-                self.hb = Instant::now();
-                ctx.pong(&msg);
-                println!("{:?}", &msg)
-            }
-            Ok(ws::Message::Pong(_)) => {
-                self.hb = Instant::now();
-            }
-            Ok(ws::Message::Text(text)) => ctx.text(text),            
+            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             _ => (),
         }
     }
 }
 
 async fn ws(req: HttpRequest,stream: web::Payload) -> Result<HttpResponse, Error> {
-    println!("{:?}", req);
-    let resp = ws::start(Ws::new(), &req, stream);
+    let resp = ws::start(Ws {}, &req, stream);
     println!("{:?}", resp);
     resp
 }
@@ -81,7 +43,7 @@ async fn index() -> impl Responder {
     HttpResponse::Ok().body(rendered)
 }
 
-#[actix_web::main]
+#[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
